@@ -141,16 +141,21 @@ def export_categorized_excel(data_list, output_file="2026院校信息_分类.xls
     print(f"\n=== 开始生成分类表格：{output_file} ===")
     categories = {
         "理工农医": [],
-        "经管法学": [],
+        "经管法": [],
         "人文社科与艺术": [],
         "单校": []
     }
     
     kw_jingguan = ['经济', '金融', '管理', '商', '法学', '法律', '财', '审计', '会计', '税务', '保险', '行政', '政治', '公共管理', '统计']
     kw_renwen = ['文学', '中文', '外语', '历史', '史学', '哲学', '艺术', '语言', '翻译', '新闻', '传媒', '传播', '社会', '设计', '音乐', '美术', '戏剧', '影视', '体育', '心理', '教育', '马克思', '国际']
-    kw_ligong = ['工学', '农学', '医学', '计算', '软件', '电子', '信息', '通信', '网络', '系统', '物理', '化学', '数学', '生物', '材料', '机械', '土木', '航空', '航天', '动力', '电气', '自动', '环境', '地理', '地质', '海洋', '药', '护理', '卫生', '光', '数据', '智能', '制造', '测控', '安全', '技术', '科学', '工程']
+    kw_ligong = ['工学', '农学', '医学', '计算', '软件', '电子', '信息', '通信', '网络', '系统', '物理', '化学', '数学', '生物', '材料', '机械', '土木', '航空', '航天', '动力', '电气', '自动', '环境', '地理', '地质', '海洋', '药', '护理', '卫生', '光', '数据', '智能', '制造', '测控', '安全', '技术', '工程']
     
     for row in data_list:
+        academy = row.get('学院', '')
+        if '管理' in academy or '经济' in academy or "商学" in academy:
+            categories["经管法"].append(row)
+            continue
+            
         major = row.get('专业', '')
         if not major or major in ['不限', '无限制', '全校']:
             categories["单校"].append(row)
@@ -159,7 +164,7 @@ def export_categorized_excel(data_list, output_file="2026院校信息_分类.xls
         matched_categories = set()
         for kw in kw_jingguan:
             if kw in major:
-                matched_categories.add("经管法学")
+                matched_categories.add("经管法")
                 break
         for kw in kw_renwen:
             if kw in major:
@@ -200,7 +205,7 @@ def export_categorized_excel(data_list, output_file="2026院校信息_分类.xls
                 
     print(f"成功导出分类表格，各类别统计如下：")
     print(f"  - 理工农医       : {len(categories['理工农医'])} 条")
-    print(f"  - 经管法学       : {len(categories['经管法学'])} 条")
+    print(f"  - 经管法       : {len(categories['经管法'])} 条")
     print(f"  - 人文社科与艺术 : {len(categories['人文社科与艺术'])} 条")
     print(f"  - 单校         : {len(categories['单校'])} 条")
 
