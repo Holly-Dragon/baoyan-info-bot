@@ -561,6 +561,9 @@ def update_tencent_sheet(excel_path: str, sheet_url: str,
     
     for sheet in sheets_info:
         SHEET_NAME_TO_ID[sheet["sheet_name"]] = sheet["sheet_id"]
+    # 别名映射："单校" 在在线表格中名为"单校通知"（ID: 56j4fo）
+    if SHEET_NAME_TO_ID.get("单校") in ("000004", None) and "单校通知" in SHEET_NAME_TO_ID:
+        SHEET_NAME_TO_ID["单校"] = SHEET_NAME_TO_ID["单校通知"]
     print(f"子表映射: {SHEET_NAME_TO_ID}")
     
     # 3. 对比并找出新增数据

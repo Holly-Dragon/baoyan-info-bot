@@ -37,6 +37,7 @@ def get_and_update_college_info(excel_file="2026院校信息.xlsx", update_file=
             print(f"读取旧Excel基准出错：{e}")
 
     now = datetime.now()
+    formatted_update_date = f"{now.year}年{now.month}月{now.day}日"
     all_data_map = {item.get('通知链接'): item for item in old_data}
     new_data_list = []
     
@@ -97,7 +98,7 @@ def get_and_update_college_info(excel_file="2026院校信息.xlsx", update_file=
                     if is_new_or_updated:
                         has_new_items_in_page = True
                         row = {
-                            '更新时间': now.strftime("%Y-%m-%d %H:%M:%S"),
+                            '更新时间': formatted_update_date,
                             '院校报名信息发布时间': format_date_str(item.get('updated_time', '未知')),
                             '学校': school,
                             '学院': academy,
@@ -148,7 +149,7 @@ def export_categorized_excel(data_list, output_file="2026院校信息_分类.xls
     
     kw_jingguan = ['经济', '金融', '管理', '商', '法学', '法律', '财', '审计', '会计', '税务', '保险', '行政', '政治', '公共管理', '统计']
     kw_renwen = ['文学', '中文', '外语', '历史', '史学', '哲学', '艺术', '语言', '翻译', '新闻', '传媒', '传播', '社会', '设计', '音乐', '美术', '戏剧', '影视', '体育', '心理', '教育', '马克思']
-    kw_ligong = ['工学', '农学', '医学', '计算', '软件', '电子', '信息', '通信', '网络', '系统', '物理', '化学', '数学', '生物', '材料', '机械', '土木', '航空', '航天', '动力', '电气', '自动', '环境', '地理', '地质', '海洋', '药', '护理', '卫生', '光', '数据', '智能', '制造', '测控', '安全', '技术', '工程']
+    kw_ligong = ['工学', '农学', '医学', '计算', '软件', '电子', '信息', '通信', '网络', '系统', '物理', '化学', '数学', '生物', '材料', '机械', '土木', '航空', '航天', '动力', '电气', '自动', '环境', '地理', '地质', '海洋', '药', '护理', '卫生', '光', '数据', '智能', '制造', '测控', '安全', '技术', '工程', '建筑']
     
     for row in data_list:
         academy = row.get('学院', '')
@@ -182,7 +183,7 @@ def export_categorized_excel(data_list, output_file="2026院校信息_分类.xls
             categories[category].append(row)
         
     with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-        columns = ['更新时间', '院校报名信息发布时间', '学校', '学院', '专业', '招生项目', '通知链接', '申请截止时间', '申请倒计时', '是否截止']
+        columns = ['更新时间', '院校报名信息发布时间', '学校', '学院', '专业', '招生项目', '通知链接', '申请截止时间', '申请倒计时']
         for sheet_name, rows in categories.items():
             if rows:
                 df = pd.DataFrame(rows)
@@ -197,7 +198,6 @@ def export_categorized_excel(data_list, output_file="2026院校信息_分类.xls
                 
                 row_indices = df.index + 2
                 df['申请倒计时'] = [f'=IFERROR(IF(DATEVALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(H{idx},"年","-"),"月","-"),"日",""))<TODAY(), "已截止", DATEVALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(H{idx},"年","-"),"月","-"),"日",""))-TODAY() & "天"), "未知")' for idx in row_indices]
-                df['是否截止'] = [f'=IFERROR(IF(DATEVALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(H{idx},"年","-"),"月","-"),"日",""))<TODAY(), "是", "否"), "未知")' for idx in row_indices]
                 
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
             else:
