@@ -8,7 +8,7 @@
 2. 获取腾讯在线表格的现有数据
 3. 对比去重，找出新增数据
 4. 将新增数据追加写入在线表格
-5. "申请倒计时"和"是否截止"字段使用公式实时计算
+5. "申请倒计时"字段使用公式实时计算
 
 使用方式：
     python update_tencent_sheet.py [--excel EXCEL_PATH] [--url SHEET_URL]
@@ -24,6 +24,7 @@
 """
 
 import os
+import re
 import sys
 import json
 import subprocess
@@ -277,6 +278,19 @@ class TencentSheetAPI:
         }
         return self._run_mcporter("set_range_value", args)
 
+    def set_link(self, file_url: str, sheet_id: str, row: int, col: int,
+                 url: str, display_text: str) -> dict:
+        """为指定单元格设置超链接"""
+        args = {
+            "file_url": file_url,
+            "sheet_id": sheet_id,
+            "row": row,
+            "col": col,
+            "url": url,
+            "display_text": display_text
+        }
+        return self._run_mcporter("set_link", args)
+
 
 # ============== 数据处理 ==============
 
@@ -312,7 +326,8 @@ def read_local_excel(excel_path: str) -> Dict[str, List[dict]]:
 
 def get_online_data(api: TencentSheetAPI, file_url: str, sheet_id: str) -> Tuple[List[str], List[dict]]:
     """获取在线表格的现有数据"""
-    result = api.get_cell_data(file_url, sheet_id, 0, 0, 499, 9, return_csv=True)
+    # 共享表格已删除“是否截止”列，仅拉取到“申请倒计时”(第9列，0-based col=8)
+    result = api.get_cell_data(file_url, sheet_id, 0, 0, 499, 8, return_csv=True)
     
     if "error" in result:
         print(f"获取在线数据失败: {result['error']}")
@@ -341,10 +356,14 @@ def get_online_data(api: TencentSheetAPI, file_url: str, sheet_id: str) -> Tuple
         fields.append(current)
         return fields
     
-    headers = parse_csv_line(lines[0])
+    # 约定：第1行为说明/占位，第2行为字段名，第3行起为实际数据
+    if len(lines) < 2:
+        return [], []
+
+    headers = parse_csv_line(lines[1])
     data_rows = []
     
-    for line in lines[1:]:
+    for line in lines[2:]:
         if not line.strip() or line.count(',') < 5:
             continue
         fields = parse_csv_line(line)
@@ -375,9 +394,48 @@ def find_new_rows(local_rows: List[dict], online_rows: List[dict]) -> List[dict]
     return new_rows
 
 
-def build_cell_values(row: dict, row_index: int) -> List[dict]:
+def build_cell_values(row: dict, row_index: int) -> Tuple[List[dict], Optional[dict]]:
+    """
+    构建单元格值列表，包含公式。
+    返回 (values, link_info)，其中 link_info 为 {"row": ..., "col": ..., "url": ..., "display": ...} 或 None。
+    """
+    values = []
     """构建单元格值列表，包含公式"""
     values = []
+
+    def normalize_update_time(raw_value) -> str:
+        """统一输出为 2026年X月X日，避免时分秒或其他格式混入共享表格。"""
+        if raw_value is None:
+            today = datetime.now()
+            return f"2026年{today.month}月{today.day}日"
+
+        value = str(raw_value).strip()
+        if not value:
+            today = datetime.now()
+            return f"2026年{today.month}月{today.day}日"
+
+        # 兼容 "2026年4月11日" 这类格式
+        zh_match = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日", value)
+        if zh_match:
+            month = int(zh_match.group(2))
+            day = int(zh_match.group(3))
+            return f"2026年{month}月{day}日"
+
+        # 兼容 "2026-04-11" / "2026/04/11" / 带时分秒等格式
+        try:
+            dt = datetime.fromisoformat(value.replace("/", "-").replace("Z", ""))
+            return f"2026年{dt.month}月{dt.day}日"
+        except ValueError:
+            pass
+
+        ymd_match = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", value)
+        if ymd_match:
+            month = int(ymd_match.group(2))
+            day = int(ymd_match.group(3))
+            return f"2026年{month}月{day}日"
+
+        today = datetime.now()
+        return f"2026年{today.month}月{today.day}日"
     
     field_mapping = [
         ("更新时间", "STRING"),
@@ -392,6 +450,8 @@ def build_cell_values(row: dict, row_index: int) -> List[dict]:
     
     for col_idx, (field_name, value_type) in enumerate(field_mapping):
         value = row.get(field_name, "")
+        if field_name == "更新时间":
+            value = normalize_update_time(value)
         if value is None:
             value = ""
         values.append({
@@ -409,39 +469,58 @@ def build_cell_values(row: dict, row_index: int) -> List[dict]:
         "value_type": "FORMULA",
         "formula": countdown_formula
     })
-    
-    # 是否截止公式
-    is_expired_formula = f'=IFERROR(IF(DATEVALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(H{row_index+1},"年","-"),"月","-"),"日",""))<TODAY(),"是","否"),"未知")'
-    values.append({
-        "row": row_index,
-        "col": 9,
-        "value_type": "FORMULA",
-        "formula": is_expired_formula
-    })
-    
-    return values
+
+    # 收集通知链接超链接信息（第6列，0-based）
+    link_url = row.get("通知链接", "")
+    if link_url and str(link_url).strip():
+        link_info = {
+            "row": row_index,
+            "col": 6,
+            "url": str(link_url).strip(),
+            "display": str(link_url).strip()
+        }
+    else:
+        link_info = None
+
+    return values, link_info
 
 
-def append_data_to_sheet(api: TencentSheetAPI, file_url: str, sheet_id: str, 
+def append_data_to_sheet(api: TencentSheetAPI, file_url: str, sheet_id: str,
                          new_rows: List[dict], existing_row_count: int) -> int:
     """将新数据追加写入在线表格"""
     if not new_rows:
         return 0
-    
+
     start_row = existing_row_count
     all_values = []
-    
+    all_link_info = []
+
     for i, row in enumerate(new_rows):
         row_index = start_row + i
-        values = build_cell_values(row, row_index)
+        values, link_info = build_cell_values(row, row_index)
         all_values.extend(values)
-    
+        if link_info:
+            all_link_info.append(link_info)
+
     result = api.set_range_value(file_url, sheet_id, all_values)
-    
+
     if "error" in result:
         print(f"  写入失败: {result['error']}")
         return 0
-    
+
+    # 单独写入超链接（通知链接列）
+    for link in all_link_info:
+        link_result = api.set_link(
+            file_url=file_url,
+            sheet_id=sheet_id,
+            row=link["row"],
+            col=link["col"],
+            url=link["url"],
+            display_text=link["display"]
+        )
+        if "error" in link_result:
+            print(f"  ⚠️  超链接写入失败 (行 {link['row']}, 列 {link['col']}): {link_result['error']}")
+
     return len(new_rows)
 
 
@@ -525,7 +604,8 @@ def update_tencent_sheet(excel_path: str, sheet_url: str,
             continue
         
         _, online_rows = get_online_data(api, sheet_url, sheet_id)
-        existing_row_count = len(online_rows) + 1
+        # 共享表格约定：第1行跳过，第2行为表头，第3行开始写数据（0-based 起始行为 2）
+        existing_row_count = len(online_rows) + 2
         
         new_rows = find_new_rows(local_rows, online_rows)
         
