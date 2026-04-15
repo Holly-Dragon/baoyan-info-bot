@@ -45,7 +45,8 @@ except ImportError:
 # 默认 Excel 文件路径
 DEFAULT_EXCEL_PATH = "2026院校信息_更新.xlsx"
 
-# 默认腾讯文档 URL
+# 默认腾讯文档 URL：https://docs.qq.com/sheet/DWkpjRkZodUF3UG92
+# 测试文档 URL：https://docs.qq.com/sheet/DWm5ucU5WY1hsY3Fv
 DEFAULT_SHEET_URL = "https://docs.qq.com/sheet/DWkpjRkZodUF3UG92"
 
 # Sheet 名称与 ID 的映射（需要先通过 get_sheet_info 获取）
@@ -53,7 +54,7 @@ SHEET_NAME_TO_ID = {
     "理工农医": "000001",
     "经管法": "000002",
     "人文社科与艺术": "000003",
-    "单校": "000004",
+    "单校通知": "000004",
 }
 
 
@@ -315,7 +316,13 @@ def read_local_excel(excel_path: str) -> Dict[str, List[dict]]:
             row_data = {}
             for c, header in enumerate(headers):
                 if header:
-                    row_data[header] = ws.cell(r, c + 1).value
+                    val = ws.cell(r, c + 1).value
+                    if header == "通知链接" and isinstance(val, str):
+                        import re
+                        match = re.search(r'=HYPERLINK\("([^"]+)"', val, re.IGNORECASE)
+                        if match:
+                            val = match.group(1)
+                    row_data[header] = val
             rows.append(row_data)
         
         result[sheet_name] = rows
@@ -327,7 +334,7 @@ def read_local_excel(excel_path: str) -> Dict[str, List[dict]]:
 def get_online_data(api: TencentSheetAPI, file_url: str, sheet_id: str) -> Tuple[List[str], List[dict]]:
     """获取在线表格的现有数据"""
     # 共享表格已删除“是否截止”列，仅拉取到“申请倒计时”(第9列，0-based col=8)
-    result = api.get_cell_data(file_url, sheet_id, 0, 0, 499, 8, return_csv=True)
+    result = api.get_cell_data(file_url, sheet_id, 0, 0, 199, 8, return_csv=True)
     
     if "error" in result:
         print(f"获取在线数据失败: {result['error']}")

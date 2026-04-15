@@ -39,8 +39,8 @@ def update_titles(excel_file="2026院校信息_更新.xlsx"):
             
         for row in range(2, ws.max_row + 1):
             link_cell = ws.cell(row=row, column=link_col_idx)
-            link = str(link_cell.value).strip() if link_cell.value else ""
-            
+            link_function = str(link_cell.value).strip() if link_cell.value else ""
+            link = link_function.strip('=HYPERLINK("').split('",')[0] if link_function.startswith('=HYPERLINK("') else link_function
             if not link.startswith("http"):
                 continue
                 

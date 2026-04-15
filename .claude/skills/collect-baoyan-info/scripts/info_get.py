@@ -3,7 +3,42 @@ import json
 import time
 import os
 import pandas as pd
+import openpyxl
 from datetime import datetime
+
+def read_excel_preserving_links(filepath, target_col='通知链接'):
+    """读取Excel并保留指定的公式列（如超链接），避免pandas将其读取为空或0"""
+    dfs = pd.read_excel(filepath, sheet_name=None)
+    try:
+        wb = openpyxl.load_workbook(filepath, data_only=False)
+        for sheet_name, df in dfs.items():
+            if sheet_name not in wb.sheetnames:
+                continue
+            ws = wb[sheet_name]
+            if df.empty or target_col not in df.columns:
+                continue
+            headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
+            if target_col in headers:
+                col_idx = headers.index(target_col) + 1
+                new_links = [ws.cell(r, col_idx).value for r in range(2, ws.max_row + 1)]
+                if len(new_links) >= len(df):
+                    df[target_col] = new_links[:len(df)]
+                else:
+                    new_links.extend([None] * (len(df) - len(new_links)))
+                    df[target_col] = new_links
+    except Exception as e:
+        print(f"提取链接时出错: {e}")
+    return dfs
+
+def extract_url_from_hyperlink(link_str):
+    import re
+    """提取可能的 Excel HYPERLINK 公式中的实际 URL"""
+    if not isinstance(link_str, str):
+        return link_str
+    match = re.search(r'=HYPERLINK\("([^"]+)"', link_str, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return link_str
 
 def format_date_str(date_str):
     """尝试将日期字符串格式化为 'x年x月x日'"""
@@ -29,16 +64,25 @@ def get_and_update_college_info(excel_file="2026院校信息.xlsx", update_file=
     old_data = []
     if os.path.exists(excel_file):
         try:
-            df_old = pd.read_excel(excel_file)
-            df_old = df_old.fillna('')
-            old_data = df_old.to_dict('records')
-            print(f"成功加载已有本地基准文件，共 {len(old_data)} 条记录用于对比。")
+            dfs_old = read_excel_preserving_links(excel_file)
+            if dfs_old:
+                df_old = list(dfs_old.values())[0]
+                df_old = df_old.fillna('')
+                old_data = df_old.to_dict('records')
+                # 还原通知链接（去掉公式）
+                for row in old_data:
+                    row['通知链接'] = extract_url_from_hyperlink(row.get('通知链接', ''))
+                print(f"成功加载已有本地基准文件，共 {len(old_data)} 条记录用于对比。")
+            else:
+                print(f"旧Excel基准为空")
         except Exception as e:
             print(f"读取旧Excel基准出错：{e}")
 
     now = datetime.now()
     formatted_update_date = f"{now.year}年{now.month}月{now.day}日"
+    
     all_data_map = {item.get('通知链接'): item for item in old_data}
+            
     new_data_list = []
     
     print("\n=== 开始拉取 API 更新数据 ===")
@@ -92,7 +136,7 @@ def get_and_update_college_info(excel_file="2026院校信息.xlsx", update_file=
                         old_item = all_data_map[office_url]
                         # 对旧数据的日期也进行一样的格式化后再做对比，避免因单改时间格式导致所有历史数据被误判为“更新”
                         old_end_str = format_date_str(old_item.get('申请截止时间'))
-                        if old_item.get('招生项目') != project or old_end_str != formatted_end_str:
+                        if old_end_str != formatted_end_str:
                             is_new_or_updated = True
                             
                     if is_new_or_updated:
@@ -130,21 +174,18 @@ def get_and_update_college_info(excel_file="2026院校信息.xlsx", update_file=
 
     if new_data_list:
         print(f"\n发现 {len(new_data_list)} 条最新更新数据，准备写入：{update_file}")
-        export_categorized_excel(new_data_list, update_file)
     else:
-        print("\n未发现需要更新的数据。")
-        pass
+        print("\n未发现需要更新的数据，将生成并覆盖空的更新文件。")
+        
+    export_categorized_excel(new_data_list, update_file)
 
 def export_categorized_excel(data_list, output_file="2026院校信息_分类.xlsx"):
-    if not data_list:
-        return
-        
     print(f"\n=== 开始生成分类表格：{output_file} ===")
     categories = {
         "理工农医": [],
         "经管法": [],
         "人文社科与艺术": [],
-        "单校": []
+        "单校通知": []
     }
     
     kw_jingguan = ['经济', '金融', '管理', '商', '法学', '法律', '财', '审计', '会计', '税务', '保险', '行政', '政治', '公共管理', '统计']
@@ -159,7 +200,7 @@ def export_categorized_excel(data_list, output_file="2026院校信息_分类.xls
             
         major = row.get('专业', '')
         if not major or major in ['不限', '无限制', '全校']:
-            categories["单校"].append(row)
+            categories["单校通知"].append(row)
             continue
             
         matched_categories = set()
@@ -177,7 +218,7 @@ def export_categorized_excel(data_list, output_file="2026院校信息_分类.xls
                 break
         
         if not matched_categories:
-            matched_categories.add("单校")
+            matched_categories.add("单校通知")
             
         for category in matched_categories:
             categories[category].append(row)
@@ -199,6 +240,9 @@ def export_categorized_excel(data_list, output_file="2026院校信息_分类.xls
                 row_indices = df.index + 2
                 df['申请倒计时'] = [f'=IFERROR(IF(DATEVALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(H{idx},"年","-"),"月","-"),"日",""))<TODAY(), "已截止", DATEVALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(H{idx},"年","-"),"月","-"),"日",""))-TODAY() & "天"), "未知")' for idx in row_indices]
                 
+                # 将通知链接修改为超链接形式写入Excel
+                df['通知链接'] = df['通知链接'].apply(lambda x: f'=HYPERLINK("{x}", "{x}")' if str(x).startswith('http') else x)
+                
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
             else:
                 pd.DataFrame(columns=columns).to_excel(writer, sheet_name=sheet_name, index=False)
@@ -207,7 +251,7 @@ def export_categorized_excel(data_list, output_file="2026院校信息_分类.xls
     print(f"  - 理工农医       : {len(categories['理工农医'])} 条")
     print(f"  - 经管法       : {len(categories['经管法'])} 条")
     print(f"  - 人文社科与艺术 : {len(categories['人文社科与艺术'])} 条")
-    print(f"  - 单校         : {len(categories['单校'])} 条")
+    print(f"  - 单校通知       : {len(categories['单校通知'])} 条")
 
 if __name__ == "__main__":
     get_and_update_college_info()
